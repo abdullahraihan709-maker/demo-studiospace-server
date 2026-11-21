@@ -1,54 +1,52 @@
-import "dotenv/config";
-import express from "express";
-import cors from "cors";
-import helmet from "helmet";
-import cookieParser from "cookie-parser";
+import { env } from "./config/env.js";
+import { connectDB, disconnectDB } from "./config/db.js";
+import { createApp } from "./app.js";
 
-const app = express();
-const PORT = process.env.PORT || 5000;
-const allowedOrigins = process.env.CLIENT_URL
-  ? process.env.CLIENT_URL.split(",").map((origin) => origin.trim())
-  : true;
+const SHUTDOWN_TIMEOUT_MS = 10_000;
 
-app.use(helmet());
-app.use(cors({ origin: allowedOrigins, credentials: true }));
-app.use(express.json({ limit: "1mb" }));
-app.use(cookieParser());
+async function start() {
+  // Connect before listening: a server that answers /health while Mongo is
+  // unreachable is more dangerous than one that never comes up.
+  await connectDB();
 
-/**
- * Health probe. Also used by Render's health check and by a cron ping
- * to keep the free-tier instance warm.
- */
-app.get(["/health", "/api/health"], (req, res) => {
-  res.json({
-    ok: true,
-    service: "studiospace-api",
-    uptime: Number(process.uptime().toFixed(1)),
-    timestamp: new Date().toISOString(),
+  const app = createApp();
+  const server = app.listen(env.port, () => {
+    console.log(`[boot] StudioSpace API listening on http://localhost:${env.port} (${env.nodeEnv})`);
   });
-});
 
-// 404 for anything not matched above
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: `Route ${req.method} ${req.originalUrl} not found.`,
+  server.on("error", (error) => {
+    console.error(`[boot] HTTP server error: ${error.message}`);
+    process.exit(1);
   });
-});
 
-// Central error handler — always last
-app.use((err, req, res, next) => {
-  const status = err.status || err.statusCode || 500;
-  const message =
-    status === 500 ? "Something went wrong on our side. Please try again." : err.message;
+  let shuttingDown = false;
 
-  if (status === 500) {
-    console.error("[error]", err);
+  async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[boot] ${signal} received, shutting down`);
+
+    const forceExit = setTimeout(() => {
+      console.error("[boot] shutdown timed out; forcing exit");
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS);
+    forceExit.unref();
+
+    server.close(async () => {
+      try {
+        await disconnectDB();
+      } finally {
+        clearTimeout(forceExit);
+        process.exit(0);
+      }
+    });
   }
 
-  res.status(status).json({ success: false, message });
-});
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+}
 
-app.listen(PORT, () => {
-  console.log(`StudioSpace API listening on http://localhost:${PORT}`);
+start().catch((error) => {
+  console.error(`[boot] failed: ${error.message}`);
+  process.exit(1);
 });

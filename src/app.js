@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import { env } from "./config/env.js";
 import { getDbState } from "./config/db.js";
 import { notFoundHandler, errorHandler } from "./middleware/errorHandler.js";
+import { apiRouter } from "./routes/index.js";
 
 /**
  * Builds the Express app without listening.
@@ -34,6 +35,12 @@ export function createApp() {
       timestamp: new Date().toISOString(),
     });
   });
+
+  // /api is the canonical base; /api/v1 is what the browser reaches through
+  // the Next.js rewrite. Mounting twice is explicit and works on Express 5,
+  // where an array path only matches its first entry.
+  app.use("/api", apiRouter);
+  app.use("/api/v1", apiRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

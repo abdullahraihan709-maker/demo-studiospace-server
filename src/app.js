@@ -1,9 +1,7 @@
 import express from "express";
-import cors from "cors";
-import helmet from "helmet";
-import cookieParser from "cookie-parser";
 import { env } from "./config/env.js";
 import { getDbState } from "./config/db.js";
+import { applySecurity } from "./config/security.js";
 import { notFoundHandler, errorHandler } from "./middleware/errorHandler.js";
 import { apiRouter } from "./routes/index.js";
 
@@ -15,12 +13,7 @@ import { apiRouter } from "./routes/index.js";
 export function createApp() {
   const app = express();
 
-  app.disable("x-powered-by");
-
-  app.use(helmet());
-  app.use(cors({ origin: env.clientOrigins, credentials: true }));
-  app.use(express.json({ limit: "1mb" }));
-  app.use(cookieParser());
+  applySecurity(app);
 
   /**
    * Health probe. Also used by Render's health check and by a cron ping
